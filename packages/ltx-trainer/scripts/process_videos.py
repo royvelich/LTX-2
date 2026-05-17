@@ -556,7 +556,7 @@ def compute_latents(  # noqa: PLR0913, PLR0915
     dataloader = _build_sharded_dataloader(
         dataset,
         batch_size=batch_size,
-        num_workers=4,
+        num_workers=0 if dry_run else 4,
         is_done=_is_done,
         overwrite=overwrite,
     )
