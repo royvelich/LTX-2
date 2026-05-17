@@ -93,6 +93,7 @@ class MediaDataset(Dataset):
         reshape_mode: str = "center",
         with_audio: bool = False,
         pre_crop: tuple[int, int] | None = None,
+        absolute_paths: bool = False,
     ) -> None:
         """
         Initialize the media dataset.
@@ -103,6 +104,7 @@ class MediaDataset(Dataset):
             reshape_mode: How to crop videos ("center", "random")
             with_audio: Whether to extract audio from video files
             pre_crop: Optional (width, height) to center-crop from raw frames before any resizing
+            absolute_paths: If True, treat paths in the dataset file as absolute (don't prepend data_root)
         """
         super().__init__()
 
@@ -112,6 +114,7 @@ class MediaDataset(Dataset):
         self.reshape_mode = reshape_mode
         self.with_audio = with_audio
         self.pre_crop = pre_crop
+        self.absolute_paths = absolute_paths
 
         # First load main media paths
         self.main_media_paths = self._load_video_paths(main_media_column)
@@ -143,10 +146,15 @@ class MediaDataset(Dataset):
 
         video_path: Path = self.video_paths[index]
 
-        # Compute relative path of the video
-        data_root = self.dataset_file.parent
-        relative_path = str(video_path.relative_to(data_root))
-        media_relative_path = str(self.main_media_paths[index].relative_to(data_root))
+        # Compute relative path of the video for output structure
+        if self.absolute_paths:
+            # Use path relative to filesystem root (strip leading /)
+            relative_path = str(video_path.relative_to(video_path.anchor))
+            media_relative_path = str(self.main_media_paths[index].relative_to(self.main_media_paths[index].anchor))
+        else:
+            data_root = self.dataset_file.parent
+            relative_path = str(video_path.relative_to(data_root))
+            media_relative_path = str(self.main_media_paths[index].relative_to(data_root))
 
         if video_path.suffix.lower() in [".png", ".jpg", ".jpeg"]:
             media_tensor = self._preprocess_image(video_path)
@@ -231,7 +239,13 @@ class MediaDataset(Dataset):
             raise ValueError(f"Column '{column}' not found in CSV file")
 
         data_root = self.dataset_file.parent
-        video_paths = [data_root / Path(line.strip()) for line in df[column].tolist()]
+        video_paths = []
+        for line in df[column].tolist():
+            path = Path(line.strip())
+            if self.absolute_paths or path.is_absolute():
+                video_paths.append(path)
+            else:
+                video_paths.append(data_root / path)
 
         # Validate that all paths exist
         invalid_paths = [path for path in video_paths if not path.is_file()]
@@ -253,7 +267,11 @@ class MediaDataset(Dataset):
         for entry in data:
             if column not in entry:
                 raise ValueError(f"Key '{column}' not found in JSON entry")
-            video_paths.append(data_root / Path(entry[column].strip()))
+            path = Path(entry[column].strip())
+            if self.absolute_paths or path.is_absolute():
+                video_paths.append(path)
+            else:
+                video_paths.append(data_root / path)
 
         # Validate that all paths exist
         invalid_paths = [path for path in video_paths if not path.is_file()]
@@ -271,7 +289,11 @@ class MediaDataset(Dataset):
                 entry = json.loads(line)
                 if column not in entry:
                     raise ValueError(f"Key '{column}' not found in JSONL entry")
-                video_paths.append(data_root / Path(entry[column].strip()))
+                path = Path(entry[column].strip())
+                if self.absolute_paths or path.is_absolute():
+                    video_paths.append(path)
+                else:
+                    video_paths.append(data_root / path)
 
         # Validate that all paths exist
         invalid_paths = [path for path in video_paths if not path.is_file()]
@@ -461,6 +483,7 @@ def compute_latents(  # noqa: PLR0913, PLR0915
     overwrite: bool = False,
     pre_crop: tuple[int, int] | None = None,
     dry_run: bool = False,
+    absolute_paths: bool = False,
 ) -> None:
     """
     Process videos and save latent representations.
@@ -498,6 +521,7 @@ def compute_latents(  # noqa: PLR0913, PLR0915
         reshape_mode=reshape_mode,
         with_audio=with_audio,
         pre_crop=pre_crop,
+        absolute_paths=absolute_paths,
     )
     logger.info(f"Loaded {len(dataset)} valid media files")
 
@@ -517,8 +541,14 @@ def compute_latents(  # noqa: PLR0913, PLR0915
 
     output_suffix = ".mp4" if dry_run else ".pt"
 
+    def _get_output_rel_path(idx: int) -> Path:
+        p = dataset.main_media_paths[idx]
+        if dataset.absolute_paths:
+            return Path(p.relative_to(p.anchor)).with_suffix(output_suffix)
+        return p.relative_to(data_root).with_suffix(output_suffix)
+
     def _is_done(idx: int) -> bool:
-        rel = dataset.main_media_paths[idx].relative_to(data_root).with_suffix(output_suffix)
+        rel = _get_output_rel_path(idx)
         if not (output_path / rel).is_file():
             return False
         return audio_output_path is None or (audio_output_path / rel).is_file()
@@ -1103,6 +1133,11 @@ def main(  # noqa: PLR0913
         help="Save preprocessed videos as mp4 files instead of encoding to latents. "
         "Useful for visually verifying crop/resize behavior without loading the VAE.",
     ),
+    absolute_paths: bool = typer.Option(
+        default=False,
+        help="Treat paths in the dataset file as absolute. Use when videos are in a different "
+        "directory tree than the dataset JSON file.",
+    ),
 ) -> None:
     """Process videos/images and save latent representations for video generation training.
     For multi-GPU preprocessing, invoke under ``accelerate launch`` - each process
@@ -1167,6 +1202,7 @@ def main(  # noqa: PLR0913
         overwrite=overwrite,
         pre_crop=parsed_pre_crop,
         dry_run=dry_run,
+        absolute_paths=absolute_paths,
     )
 
 
