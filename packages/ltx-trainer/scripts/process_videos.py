@@ -460,6 +460,7 @@ def compute_latents(  # noqa: PLR0913, PLR0915
     audio_output_dir: str | None = None,
     overwrite: bool = False,
     pre_crop: tuple[int, int] | None = None,
+    dry_run: bool = False,
 ) -> None:
     """
     Process videos and save latent representations.
@@ -514,8 +515,10 @@ def compute_latents(  # noqa: PLR0913, PLR0915
 
     data_root = dataset.dataset_file.parent
 
+    output_suffix = ".mp4" if dry_run else ".pt"
+
     def _is_done(idx: int) -> bool:
-        rel = dataset.main_media_paths[idx].relative_to(data_root).with_suffix(".pt")
+        rel = dataset.main_media_paths[idx].relative_to(data_root).with_suffix(output_suffix)
         if not (output_path / rel).is_file():
             return False
         return audio_output_path is None or (audio_output_path / rel).is_file()
@@ -528,6 +531,44 @@ def compute_latents(  # noqa: PLR0913, PLR0915
         overwrite=overwrite,
     )
     if dataloader is None:
+        return
+
+    # Dry-run mode: save preprocessed videos as mp4 without encoding to latents
+    if dry_run:
+        from ltx_trainer.video_utils import save_video
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Saving preprocessed videos (dry run)", total=len(dataloader))
+
+            for batch in dataloader:
+                video = batch["video"]
+
+                for i in range(len(batch["relative_path"])):
+                    output_rel_path = Path(batch["main_media_relative_path"][i]).with_suffix(".mp4")
+                    output_file = output_path / output_rel_path
+                    output_file.parent.mkdir(parents=True, exist_ok=True)
+
+                    # video is [B, C, F, H, W] -> extract [C, F, H, W] -> [F, C, H, W]
+                    frames = video[i].permute(1, 0, 2, 3)
+                    # Undo normalization: x * 0.5 + 0.5 to get back to [0, 1]
+                    frames = frames * 0.5 + 0.5
+                    frames = frames.clamp(0, 1)
+
+                    fps = batch["video_metadata"]["fps"][i].item()
+                    save_video(frames, output_file, fps=fps)
+
+                progress.advance(task)
+
+        logger.info(f"Dry run: saved {len(dataloader.dataset)} preprocessed videos to {output_path}")
         return
 
     # Load video VAE encoder
@@ -1057,6 +1098,11 @@ def main(  # noqa: PLR0913
         help="Center-crop raw frames to WxH before any resizing (e.g. '1920x1088'). "
         "No scaling is applied — this is a 1:1 pixel crop from the center of each frame.",
     ),
+    dry_run: bool = typer.Option(
+        default=False,
+        help="Save preprocessed videos as mp4 files instead of encoding to latents. "
+        "Useful for visually verifying crop/resize behavior without loading the VAE.",
+    ),
 ) -> None:
     """Process videos/images and save latent representations for video generation training.
     For multi-GPU preprocessing, invoke under ``accelerate launch`` - each process
@@ -1120,6 +1166,7 @@ def main(  # noqa: PLR0913
         audio_output_dir=audio_output_dir,
         overwrite=overwrite,
         pre_crop=parsed_pre_crop,
+        dry_run=dry_run,
     )
 
 
