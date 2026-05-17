@@ -484,6 +484,7 @@ def compute_latents(  # noqa: PLR0913, PLR0915
     pre_crop: tuple[int, int] | None = None,
     dry_run: bool = False,
     absolute_paths: bool = False,
+    num_workers: int = 4,
 ) -> None:
     """
     Process videos and save latent representations.
@@ -556,7 +557,7 @@ def compute_latents(  # noqa: PLR0913, PLR0915
     dataloader = _build_sharded_dataloader(
         dataset,
         batch_size=batch_size,
-        num_workers=0 if dry_run else 4,
+        num_workers=num_workers,
         is_done=_is_done,
         overwrite=overwrite,
     )
@@ -1138,6 +1139,10 @@ def main(  # noqa: PLR0913
         help="Treat paths in the dataset file as absolute. Use when videos are in a different "
         "directory tree than the dataset JSON file.",
     ),
+    num_workers: int = typer.Option(
+        default=4,
+        help="Number of DataLoader workers. Reduce to 0-1 for very large videos to avoid OOM.",
+    ),
 ) -> None:
     """Process videos/images and save latent representations for video generation training.
     For multi-GPU preprocessing, invoke under ``accelerate launch`` - each process
@@ -1203,6 +1208,7 @@ def main(  # noqa: PLR0913
         pre_crop=parsed_pre_crop,
         dry_run=dry_run,
         absolute_paths=absolute_paths,
+        num_workers=num_workers,
     )
 
 
