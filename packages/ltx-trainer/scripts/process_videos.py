@@ -92,6 +92,7 @@ class MediaDataset(Dataset):
         resolution_buckets: list[tuple[int, int, int]],
         reshape_mode: str = "center",
         with_audio: bool = False,
+        pre_crop: tuple[int, int] | None = None,
     ) -> None:
         """
         Initialize the media dataset.
@@ -101,6 +102,7 @@ class MediaDataset(Dataset):
             resolution_buckets: List of (frames, height, width) tuples
             reshape_mode: How to crop videos ("center", "random")
             with_audio: Whether to extract audio from video files
+            pre_crop: Optional (width, height) to center-crop from raw frames before any resizing
         """
         super().__init__()
 
@@ -109,6 +111,7 @@ class MediaDataset(Dataset):
         self.resolution_buckets = resolution_buckets
         self.reshape_mode = reshape_mode
         self.with_audio = with_audio
+        self.pre_crop = pre_crop
 
         # First load main media paths
         self.main_media_paths = self._load_video_paths(main_media_column)
@@ -341,6 +344,14 @@ class MediaDataset(Dataset):
         # Load video frames up to max_target_frames
         video, fps = read_video(path, max_frames=self.max_target_frames)
 
+        # Apply pre-crop (1:1 pixel center crop) before any resizing
+        if self.pre_crop is not None:
+            crop_w, crop_h = self.pre_crop
+            _, _, h, w = video.shape
+            top = (h - crop_h) // 2
+            left = (w - crop_w) // 2
+            video = crop(video, top=top, left=left, height=crop_h, width=crop_w)
+
         nearest_bucket = self._get_resolution_bucket_for_item(video)
         target_num_frames, target_height, target_width = nearest_bucket
         frames_resized = self._resize_and_crop(video, target_height, target_width)
@@ -448,6 +459,7 @@ def compute_latents(  # noqa: PLR0913, PLR0915
     with_audio: bool = False,
     audio_output_dir: str | None = None,
     overwrite: bool = False,
+    pre_crop: tuple[int, int] | None = None,
 ) -> None:
     """
     Process videos and save latent representations.
@@ -484,6 +496,7 @@ def compute_latents(  # noqa: PLR0913, PLR0915
         resolution_buckets=resolution_buckets,
         reshape_mode=reshape_mode,
         with_audio=with_audio,
+        pre_crop=pre_crop,
     )
     logger.info(f"Loaded {len(dataset)} valid media files")
 
@@ -1039,6 +1052,11 @@ def main(  # noqa: PLR0913
         help="Re-encode every item even if its output exists. Use when rerunning with "
         "changed parameters (different model, resolution, etc.) so stale outputs are replaced.",
     ),
+    pre_crop: str | None = typer.Option(
+        default=None,
+        help="Center-crop raw frames to WxH before any resizing (e.g. '1920x1088'). "
+        "No scaling is applied — this is a 1:1 pixel crop from the center of each frame.",
+    ),
 ) -> None:
     """Process videos/images and save latent representations for video generation training.
     For multi-GPU preprocessing, invoke under ``accelerate launch`` - each process
@@ -1079,6 +1097,14 @@ def main(  # noqa: PLR0913
             "When training with multiple resolution buckets, you must use a batch size of 1."
         )
 
+    # Parse pre-crop
+    parsed_pre_crop = None
+    if pre_crop is not None:
+        parts = pre_crop.split("x")
+        if len(parts) != 2:
+            raise typer.BadParameter("--pre-crop must be in WxH format (e.g. '1920x1088')")
+        parsed_pre_crop = (int(parts[0]), int(parts[1]))
+
     # Process latents
     compute_latents(
         dataset_file=dataset_file,
@@ -1093,6 +1119,7 @@ def main(  # noqa: PLR0913
         with_audio=with_audio,
         audio_output_dir=audio_output_dir,
         overwrite=overwrite,
+        pre_crop=parsed_pre_crop,
     )
 
 
