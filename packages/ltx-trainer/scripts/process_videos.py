@@ -528,6 +528,32 @@ def compute_latents(  # noqa: PLR0913, PLR0915
 
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
+
+    # Save encoding config to output directory
+    from datetime import datetime, timezone
+
+    encoding_config = {
+        "created": datetime.now(tz=timezone.utc).isoformat(),
+        "dataset_file": str(dataset_file),
+        "video_column": video_column,
+        "main_media_column": main_media_column,
+        "num_items": len(dataset),
+        "model_path": model_path,
+        "resolution_buckets": [list(b) for b in resolution_buckets],
+        "pre_crop": list(pre_crop) if pre_crop else None,
+        "reshape_mode": reshape_mode,
+        "vae_tiling": vae_tiling,
+        "batch_size": batch_size,
+        "num_workers": num_workers,
+        "with_audio": with_audio,
+        "audio_output_dir": audio_output_dir,
+        "absolute_paths": absolute_paths,
+        "dry_run": dry_run,
+    }
+    config_file = output_path / "encoding_config.json"
+    with open(config_file, "w") as f:
+        json.dump(encoding_config, f, indent=2)
+    logger.info(f"Saved encoding config to {config_file}")
     audio_output_path: Path | None = None
     if with_audio:
         audio_output_path = Path(audio_output_dir)
