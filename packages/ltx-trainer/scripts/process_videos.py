@@ -526,11 +526,14 @@ def compute_latents(  # noqa: PLR0913, PLR0915
     )
     logger.info(f"Loaded {len(dataset)} valid media files")
 
-    output_path = Path(output_dir)
+    from datetime import datetime, timezone
+
+    timestamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
+    output_path = Path(output_dir) / timestamp
     output_path.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Output directory: {output_path}")
 
     # Save encoding config to output directory
-    from datetime import datetime, timezone
 
     encoding_config = {
         "created": datetime.now(tz=timezone.utc).isoformat(),
